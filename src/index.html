@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Sketch Viewer</title>
+  <style>
+    body { font-family: sans-serif; }
+    canvas { border:1px solid black; cursor: crosshair; }
+    #palette button { width: 24px; height: 24px; margin: 2px; border: none; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h2>Sketch Viewer</h2>
+  サーバーIP: <input id="serverInput" type="text" value="http://127.0.0.1:8080">
+  <button onclick="setServer()">接続</button>
+  <div id="rights">権利: -</div>
+  <label>色: <input type="color" id="colorPicker" value="#ff0000"></label>
+  <div id="palette"></div>
+  <canvas id="sketchCanvas" width="800" height="800"></canvas>
+  <div id="coords">座標: -, -</div>
+
+  <script>
+  const canvas = document.getElementById("sketchCanvas");
+  const ctx = canvas.getContext("2d");
+  const coordsDiv = document.getElementById("coords");
+  const rightsDiv = document.getElementById("rights");
+  const colorPicker = document.getElementById("colorPicker");
+  const paletteDiv = document.getElementById("palette");
+
+  let serverUrl = "";
+  let sketchData = {};
+  let sketchRange = {x:800, y:800};
+
+  let scale = 1.0;
+  const minScale = 0.2; // 縮小制限
+  let offsetX = 0, offsetY = 0;
+  let isDragging = false;
+  let lastMouseX, lastMouseY;
+
+  // パレット生成
+  const paletteColors = ["#ff0000","#00ff00","#0000ff","#ffff00","#ff00ff","#00ffff","#ffffff","#000000"];
+  paletteColors.forEach(c => {
+    const btn = document.createElement("button");
+    btn.style.background = c;
+    btn.addEventListener("click",()=> colorPicker.value = c);
+    paletteDiv.appendChild(btn);
+  });
+
+  function setServer() {
+    serverUrl = document.getElementById("serverInput").value;
+    getSketchRange();
+    getCompactSketch();
+    getRights();
+  }
+
+  async function getCompactSketch() {
+    try {
+      const res = await fetch(`${serverUrl}/getCompactSketch`);
+      const data = await res.json();
+      if (data.status.id === 0) {
+        sketchData = {};
+        for (const key in data.c) {
+          const [r,g,b] = data.c[key];
+          sketchData[key] = `rgb(${r},${g},${b})`;
+        }
+        drawSketch();
+      }
+    } catch (err) { console.error("getCompactSketch error:", err); }
+  }
+
+  async function getRights() {
+    try {
+      const res = await fetch(`${serverUrl}/getRights`);
+      const data = await res.json();
+      if (data.status.id === 0) rightsDiv.innerText = "権利: " + data.c;
+    } catch (err) { console.error("getRights error:", err); }
+  }
+
+  async function getSketchRange() {
+    try {
+      const res = await fetch(`${serverUrl}/getSketchRange`);
+      const data = await res.json();
+      if (data.status.id === 0) {
+        sketchRange = data.c;
+        canvas.width = sketchRange.x;
+        canvas.height = sketchRange.y;
+        drawSketch();
+      }
+    } catch (err) { console.error("getSketchRange error:", err); }
+  }
+
+  function drawSketch() {
+    ctx.setTransform(scale,0,0,scale,offsetX,offsetY);
+    ctx.clearRect(-offsetX/scale,-offsetY/scale,canvas.width/scale,canvas.height/scale);
+
+    // ピクセル描画
+    for (const key in sketchData) {
+      const [x,y] = key.split(",").map(Number);
+      ctx.fillStyle = sketchData[key];
+      ctx.fillRect(x,y,1,1);
+    }
+
+    // キャンバス境界枠を描画
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 1/scale;
+    ctx.strokeRect(0,0,sketchRange.x,sketchRange.y);
+  }
+
+  // マウスホイールズーム
+  canvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    const zoomFactor = 1.1;
+    const mouseX = e.offsetX;
+    const mouseY = e.offsetY;
+    const prevScale = scale;
+
+    scale = e.deltaY < 0 ? scale*zoomFactor : scale/zoomFactor;
+    scale = Math.max(scale, minScale);
+
+    offsetX = mouseX - (mouseX - offsetX)*(scale/prevScale);
+    offsetY = mouseY - (mouseY - offsetY)*(scale/prevScale);
+
+    drawSketch();
+  });
+
+  // 右クリックドラッグ
+  canvas.addEventListener("contextmenu", e=>e.preventDefault());
+  canvas.addEventListener("mousedown", e => {
+    if(e.button===2){
+      isDragging=true;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+    }
+  });
+  canvas.addEventListener("mouseup", e => { if(e.button===2) isDragging=false; });
+  canvas.addEventListener("mousemove", e => {
+    if(isDragging){
+      offsetX += e.clientX-lastMouseX;
+      offsetY += e.clientY-lastMouseY;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+      drawSketch();
+    }
+
+    const canvasX = Math.floor((e.offsetX - offsetX)/scale);
+    const canvasY = Math.floor((e.offsetY - offsetY)/scale);
+
+    const boundedX = Math.max(0, Math.min(canvasX, sketchRange.x-1));
+    const boundedY = Math.max(0, Math.min(canvasY, sketchRange.y-1));
+    coordsDiv.innerText = `座標: ${boundedX}, ${boundedY}`;
+  });
+
+  // 左クリックでpaint、Shiftでスポイト
+  canvas.addEventListener("click", async e => {
+    const canvasX = Math.floor((e.offsetX - offsetX)/scale);
+    const canvasY = Math.floor((e.offsetY - offsetY)/scale);
+
+    const boundedX = Math.max(0, Math.min(canvasX, sketchRange.x-1));
+    const boundedY = Math.max(0, Math.min(canvasY, sketchRange.y-1));
+
+    if(e.shiftKey){
+      const key = `${boundedX},${boundedY}`;
+      if(sketchData[key]){
+        colorPicker.value = rgbToHex(sketchData[key]);
+      }
+      return;
+    }
+
+    const hex = colorPicker.value;
+    const r = parseInt(hex.substr(1,2),16);
+    const g = parseInt(hex.substr(3,2),16);
+    const b = parseInt(hex.substr(5,2),16);
+
+    try{
+      const res = await fetch(`${serverUrl}/paint?x=${boundedX}&y=${boundedY}&r=${r}&g=${g}&b=${b}`);
+      const data = await res.json();
+      if(data.status.id===0){
+        await getCompactSketch();
+        await getRights();
+      }else{
+        alert(data.status.description);
+      }
+    }catch(err){ console.error("paint error:",err); }
+  });
+
+  function rgbToHex(rgb){
+    const result = rgb.match(/\d+/g);
+    if(!result) return "#000000";
+    return "#" + result.map(x=>("0"+parseInt(x).toString(16)).padStart(2,"0")).join("");
+  }
+
+  </script>
+</body>
+</html>
