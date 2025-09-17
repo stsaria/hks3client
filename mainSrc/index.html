@@ -52,8 +52,6 @@ const coordsDiv = document.getElementById("coords");
 const rightsDiv = document.getElementById("rights");
 const colorPicker = document.getElementById("colorPicker");
 const paletteDiv = document.getElementById("palette");
-const timelapseInput = document.getElementById("timelapseSeconds");
-const progressBar = document.getElementById("timelapseProgress");
 
 let serverUrl = "";
 let sketchData = {};
@@ -61,13 +59,13 @@ let sketchRange = {x:800, y:800};
 let scale = 1.0, minScale = 0.2;
 let offsetX = 0, offsetY = 0;
 let isDragging = false, lastMouseX, lastMouseY;
-let historyData = [], historyTimer = null;
 
 // パレット生成
 const paletteColors = ["#ff0000","#00ff00","#0000ff","#ffff00","#ff00ff","#00ffff","#ffffff","#000000"];
 paletteColors.forEach(c=>{
   const btn=document.createElement("button");
   btn.style.background=c;
+  btn.className="w-6 h-6 rounded border";
   btn.addEventListener("click",()=> colorPicker.value=c);
   paletteDiv.appendChild(btn);
 });
@@ -78,6 +76,7 @@ function setServer(){
   getSketchRange();
   getCompactSketch();
   getRights();
+  startAutoUpdate(1000); // 接続後に1秒ごとの自動更新開始
 }
 
 // スケッチ取得
@@ -131,14 +130,6 @@ function drawSketch(){
   ctx.strokeStyle="#000";
   ctx.lineWidth=1/scale;
   ctx.strokeRect(0,0,sketchRange.x,sketchRange.y);
-}
-
-// 1ピクセル描画（タイムラプス用）
-function drawPixel(p){
-  const key=`${p[1]},${p[2]}`;
-  sketchData[key]=`rgb(${p[3]},${p[4]},${p[5]})`;
-  ctx.fillStyle=sketchData[key];
-  ctx.fillRect(p[1],p[2],1,1);
 }
 
 // ズーム
@@ -202,23 +193,19 @@ function rgbToHex(rgb){
 // JSONダウンロード処理
 async function downloadJson(){
   try {
-    // スケッチ範囲取得
     const rangeRes = await fetch(`${serverUrl}/getSketchRange`);
     const rangeData = await rangeRes.json();
     if(rangeData.status.id !== 0) throw new Error("Failed to get sketch range");
 
-    // 履歴取得
     const historyRes = await fetch(`${serverUrl}/getHistory`);
     const historyData = await historyRes.json();
     if(historyData.status.id !== 0) throw new Error("Failed to get history");
 
-    // 出力データ組み立て
     const exportData = {
       range: rangeData.c,
       history: historyData.c
     };
 
-    // JSON ダウンロード
     const blob = new Blob([JSON.stringify(exportData, null, 2)], {type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -232,6 +219,16 @@ async function downloadJson(){
   }
 }
 
+// 自動更新処理
+function startAutoUpdate(intervalMs = 1000) {
+  if (window.autoUpdateTimer) clearInterval(window.autoUpdateTimer);
+  window.autoUpdateTimer = setInterval(async () => {
+    if (!serverUrl) return;
+    await getCompactSketch();
+    await getRights();
+  }, intervalMs);
+}
 </script>
 </body>
 </html>
+
