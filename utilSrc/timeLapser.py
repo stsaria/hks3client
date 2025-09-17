@@ -3,10 +3,7 @@ import cv2
 import numpy as np
 import argparse
 
-OUTPUT_WIDTH = 1920
-OUTPUT_HEIGHT = 1080
-
-def create_timelapse(input_file, output_file, duration=10, fps=30):
+def create_timelapse(input_file, output_file, duration=10, fps=30, out_w=1920, out_h=1080, resize=False):
     # JSON読み込み
     with open(input_file, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -37,19 +34,10 @@ def create_timelapse(input_file, output_file, duration=10, fps=30):
         output_file,
         cv2.VideoWriter_fourcc(*"mp4v"),
         fps,
-        (OUTPUT_WIDTH, OUTPUT_HEIGHT)
+        (out_w, out_h)
     )
 
     hist_index = 0
-
-    # 拡大比率計算（アスペクト比維持）
-    scale_w = OUTPUT_WIDTH / width
-    scale_h = OUTPUT_HEIGHT / height
-    scale = min(scale_w, scale_h)  # キャンバス全体が収まる最大スケール
-    new_w = int(width * scale)
-    new_h = int(height * scale)
-    offset_x = (OUTPUT_WIDTH - new_w) // 2
-    offset_y = (OUTPUT_HEIGHT - new_h) // 2
 
     for frame_idx in range(frame_count):
         virtual_ts = t_min + frame_idx * ts_per_frame
@@ -62,12 +50,21 @@ def create_timelapse(input_file, output_file, duration=10, fps=30):
                 canvas[y, x] = (b, g, r)
             hist_index += 1
 
-        # 高解像度キャンバス（黒背景）
-        frame_large = np.zeros((OUTPUT_HEIGHT, OUTPUT_WIDTH, 3), dtype=np.uint8)
-
-        # キャンバスを拡大して黒背景に貼る
-        canvas_resized = cv2.resize(canvas, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-        frame_large[offset_y:offset_y+new_h, offset_x:offset_x+new_w] = canvas_resized
+        if resize:
+            # 出力サイズに強制リサイズ
+            frame_large = cv2.resize(canvas, (out_w, out_h), interpolation=cv2.INTER_NEAREST)
+        else:
+            # アスペクト比維持で黒背景に収める
+            frame_large = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+            scale_w = out_w / width
+            scale_h = out_h / height
+            scale = min(scale_w, scale_h)
+            new_w = int(width * scale)
+            new_h = int(height * scale)
+            offset_x = (out_w - new_w) // 2
+            offset_y = (out_h - new_h) // 2
+            canvas_resized = cv2.resize(canvas, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            frame_large[offset_y:offset_y+new_h, offset_x:offset_x+new_w] = canvas_resized
 
         out.write(frame_large)
 
@@ -81,6 +78,10 @@ if __name__ == "__main__":
     parser.add_argument("output", help="出力 MP4 ファイル")
     parser.add_argument("--duration", type=int, default=10, help="動画に収める秒数")
     parser.add_argument("--fps", type=int, default=30, help="FPS")
+    parser.add_argument("--width", type=int, default=1920, help="出力解像度の横幅")
+    parser.add_argument("--height", type=int, default=1080, help="出力解像度の縦幅")
+    parser.add_argument("--resize", action="store_true", help="強制リサイズ（黒帯なし）")
     args = parser.parse_args()
 
-    create_timelapse(args.input, args.output, args.duration, args.fps)
+    create_timelapse(args.input, args.output, args.duration, args.fps, args.width, args.height, args.resize)
+
